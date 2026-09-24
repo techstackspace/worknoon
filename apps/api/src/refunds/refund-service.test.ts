@@ -134,7 +134,7 @@ describe('RefundService', () => {
     const result = await service.createRefund(baseInput);
     const data = create.mock.calls[0][0].data;
     expect(data.decision.create.classification).toBe('DAMAGED_ITEM');
-    expect(data.decision.create.reasonSummary).toContain(successfulAiResult.reasoningSummary);
+    expect(data.decision.create.policyEvaluation.ai.reasoningSummary).toBe(successfulAiResult.reasoningSummary);
     expect(data.decision.create.customerResponse).toContain('I’m sorry the item arrived damaged.');
     expect(data.decision.create.customerResponse).toContain('Your refund request is approved');
     expect(data.decision.create.policyEvaluation.ai).toMatchObject({
@@ -196,7 +196,7 @@ describe('RefundService', () => {
     const data = create.mock.calls[0][0].data;
     expect(data.status).toBe('APPROVED');
     expect(data.decision.create.policyEvaluation.ai.available).toBe(false);
-    expect(data.decision.create.reasonSummary).toContain('AI analysis unavailable');
+    expect(data.decision.create.policyEvaluation.ai.reasoningSummary).toContain('AI analysis unavailable');
   });
 
   it('fails gracefully when the AI service is unavailable and retains a denial', async () => {

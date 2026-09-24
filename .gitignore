@@ -6,3 +6,4 @@ dist/
 apps/api/src/generated/
 apps/api/prisma/*.db
 .DS_Store
+docs

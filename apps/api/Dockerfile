@@ -6,5 +6,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm ci
 COPY apps/api apps/api
 RUN npm run db:generate -w @worknoon/api && npm run build -w @worknoon/api
+ENV NODE_ENV=production
+USER node
 EXPOSE 3000
-CMD ["npm", "run", "start", "-w", "@worknoon/api"]
+CMD ["npm", "run", "start:container", "-w", "@worknoon/api"]

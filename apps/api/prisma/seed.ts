@@ -1,5 +1,9 @@
-import 'dotenv/config';
+import { config as loadDotEnv } from 'dotenv';
+import { resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { evaluateRefundPolicy, type ClaimType } from '../src/policy/refund-policy.js';
+
+loadDotEnv({ path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')] });
 
 const prisma = new PrismaClient();
 
@@ -11,8 +15,8 @@ const people = [
 ] as const;
 
 const scenarios = [
-  { person: 0, number: 'WN-10001', daysAgo: 4, total: '89.99', item: 'Canvas Daypack', sku: 'BAG-001', price: '89.99', final: false, message: 'The strap stitching came apart after delivery.', amount: '89.99' },
-  { person: 1, number: 'WN-10002', daysAgo: 7, total: '42.50', item: 'Ceramic Pour-over Set', sku: 'KIT-001', price: '42.50', final: false, message: 'The item delivered is a different color and model than I ordered.', amount: '42.50' },
+  { person: 0, number: 'WN-10001', daysAgo: 4, total: '189.99', item: 'Canvas Daypack', sku: 'BAG-001', price: '189.99', final: false, message: 'The daypack arrived damaged; the strap stitching is coming apart.', amount: '150.00' },
+  { person: 1, number: 'WN-10002', daysAgo: 7, total: '142.50', item: 'Ceramic Pour-over Set', sku: 'KIT-001', price: '142.50', final: false, message: 'I received the wrong color and model from what I ordered.', amount: '142.50' },
   { person: 2, number: 'WN-10003', daysAgo: 3, total: '129.00', item: 'Wool Throw', sku: 'HOME-001', price: '129.00', final: true, message: 'I changed my mind about this final-sale item.', amount: '129.00' },
   { person: 3, number: 'WN-10004', daysAgo: 45, total: '64.00', item: 'Desk Lamp', sku: 'HOME-002', price: '64.00', final: false, message: 'Please refund my lamp order.', amount: '64.00' },
   { person: 4, number: 'WN-10005', daysAgo: 2, total: '749.00', item: 'Studio Monitor Pair', sku: 'AUDIO-001', price: '749.00', final: false, message: 'One monitor arrived with a cracked housing.', amount: '749.00' },
@@ -47,18 +51,70 @@ async function main() {
     });
 
     const requestId = `request_${scenario.number.toLowerCase().replace('-', '_')}`;
-    await prisma.refundRequest.upsert({
+    const claimType = inferClaimType(scenario.message);
+    const policy = evaluateRefundPolicy({
+      purchasedAt: order.purchasedAt,
+      evaluatedAt: new Date(),
+      amountCents: Math.round(Number(scenario.amount) * 100),
+      hasFinalSaleItem: scenario.final,
+      claimType,
+      customerMessage: scenario.message,
+    });
+    const reasonSummary = policy.reasons.join(' ');
+    const customerResponse = policyCustomerResponse(policy.decision);
+    const decisionWrite = {
+      outcome: policy.decision,
+      classification: claimType,
+      reasonSummary,
+      customerResponse,
+      policyEvaluation: {
+        applicableRules: policy.applicableRules,
+        reasons: policy.reasons,
+        humanReviewRequired: policy.humanReviewRequired,
+        metadata: policy.metadata,
+      },
+    };
+
+    const refund = await prisma.refundRequest.upsert({
       where: { id: requestId },
-      update: {},
+      update: {
+        status: policy.decision,
+        message: scenario.message,
+        requestedAmount: scenario.amount,
+        decision: { upsert: { create: decisionWrite, update: decisionWrite } },
+      },
       create: {
         id: requestId,
         customerId: customerIds[scenario.person].id,
         orderId: order.id,
         message: scenario.message,
         requestedAmount: scenario.amount,
-        auditLogs: { create: { eventType: 'REQUEST_SUBMITTED', summary: 'Synthetic sample refund request submitted.' } },
+        status: policy.decision,
+        decision: { create: decisionWrite },
+        auditLogs: {
+          create: [
+            { eventType: 'REQUEST_SUBMITTED', summary: 'Synthetic sample refund request submitted.' },
+            { eventType: 'POLICY_EVALUATED', summary: `Policy evaluated the synthetic request as ${policy.decision}.`, metadata: { rules: policy.applicableRules } },
+            { eventType: 'DECISION_RECORDED', summary: `Seeded deterministic decision: ${policy.decision}.`, metadata: { decision: policy.decision } },
+          ],
+        },
       },
     });
+
+    const decisionLog = await prisma.auditLog.findFirst({
+      where: { refundRequestId: refund.id, eventType: 'DECISION_RECORDED' },
+      select: { id: true },
+    });
+    if (!decisionLog) {
+      await prisma.auditLog.create({
+        data: {
+          refundRequestId: refund.id,
+          eventType: 'DECISION_RECORDED',
+          summary: `Seeded deterministic decision: ${policy.decision}.`,
+          metadata: { decision: policy.decision },
+        },
+      });
+    }
   }
 
   for (let person = 7; person < people.length; person += 1) {
@@ -83,3 +139,15 @@ main().catch((error: unknown) => {
   console.error('Seed failed:', error);
   process.exitCode = 1;
 }).finally(async () => prisma.$disconnect());
+
+function inferClaimType(message: string): ClaimType {
+  if (/\b(damaged|broken|defective|cracked|torn)\b/i.test(message)) return 'DAMAGED_ITEM';
+  if (/\b(wrong|incorrect|mismatch|not what i ordered)\b/i.test(message)) return 'INCORRECT_ITEM';
+  return 'OTHER';
+}
+
+function policyCustomerResponse(decision: 'APPROVED' | 'DENIED' | 'ESCALATED'): string {
+  if (decision === 'APPROVED') return 'Your refund request is approved based on the order details.';
+  if (decision === 'DENIED') return 'This order is not eligible for a refund under the applicable policy.';
+  return 'Your request needs review by our support team before a decision is made.';
+}

@@ -9,6 +9,7 @@
     "typecheck": "npm run typecheck -w @worknoon/api && npm run typecheck -w @worknoon/web",
     "test": "npm test -w @worknoon/api",
     "db:generate": "npm run db:generate -w @worknoon/api",
+    "db:deploy": "npm run db:deploy -w @worknoon/api",
     "db:migrate": "npm run db:migrate -w @worknoon/api",
     "db:seed": "npm run db:seed -w @worknoon/api"
   },

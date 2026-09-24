@@ -9,7 +9,7 @@ import {
 } from '../ai/refund-ai-service.js';
 
 const refundDetailInclude = {
-  customer: { select: { id: true, firstName: true, lastName: true, email: true } },
+  customer: { select: { id: true, firstName: true, lastName: true } },
   order: { include: { items: true } },
   decision: true,
   auditLogs: { orderBy: { createdAt: 'asc' as const } },
@@ -31,7 +31,7 @@ export class RefundServiceError extends Error {
   }
 }
 
-/** A small deterministic bridge until the future AI classifier is introduced. */
+/** Basic deterministic claim-type hint used by the policy rules and AI-unavailable fallback. */
 function inferClaimType(message: string): ClaimType {
   if (/\b(damaged|broken|defective|cracked|torn)\b/i.test(message)) return 'DAMAGED_ITEM';
   if (/\b(wrong|incorrect|mismatch|not what i ordered)\b/i.test(message)) return 'INCORRECT_ITEM';
@@ -120,7 +120,7 @@ export class RefundService {
 
     // Do not give free-form model text control over the decision language shown to the customer.
     const customerResponse = `${ai.customerResponse} ${policyOutcomeMessage(policy.decision)}`;
-    const reasonSummary = `${ai.reasoningSummary} Deterministic policy: ${policy.reasons.join(' ')}`.slice(0, 1000);
+    const reasonSummary = policy.reasons.join(' ').slice(0, 1000);
     const aiAudit = {
       available: aiAvailable,
       confidence: ai.confidence,
@@ -128,6 +128,7 @@ export class RefundService {
       uncertainty: ai.uncertainty,
       suspiciousOrConflicting: ai.suspiciousOrConflicting,
       signalSummary: ai.signalSummary,
+      reasoningSummary: ai.reasoningSummary,
       model: ai.model,
       promptVersion: ai.promptVersion,
     };
