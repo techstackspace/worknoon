@@ -1,5 +1,12 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { evaluateRefundPolicy, type ClaimType } from '../policy/refund-policy.js';
+import {
+  AI_PROMPT_VERSION,
+  OpenAiRefundAiService,
+  type RefundAiAnalysis,
+  type RefundAiContext,
+  type RefundAiProvider,
+} from '../ai/refund-ai-service.js';
 
 const refundDetailInclude = {
   customer: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -35,12 +42,13 @@ export class RefundService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly now: () => Date = () => new Date(),
+    private readonly aiService: RefundAiProvider = new OpenAiRefundAiService(),
   ) {}
 
   async createRefund(input: CreateRefundInput): Promise<RefundDetail> {
     const customer = await this.prisma.customer.findUnique({
       where: { id: input.customerId },
-      select: { id: true },
+      select: { id: true, firstName: true, lastName: true },
     });
     if (!customer) throw new RefundServiceError('Customer not found.', 404);
 
@@ -65,6 +73,65 @@ export class RefundService {
       customerMessage: input.customerMessage,
     });
 
+    const aiContext: RefundAiContext = {
+      customer: { id: customer.id, firstName: customer.firstName, lastName: customer.lastName },
+      order: {
+        orderNumber: order.orderNumber,
+        purchasedAt: order.purchasedAt.toISOString(),
+        currency: order.currency,
+        totalAmount: Number(order.totalAmount),
+        items: order.items.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          unitPrice: Number(item.unitPrice),
+          isFinalSale: item.isFinalSale,
+        })),
+      },
+      refund: { requestedAmount: input.requestedAmount, customerMessage: input.customerMessage },
+      policy: {
+        decision: policy.decision,
+        applicableRules: policy.applicableRules,
+        reasons: policy.reasons,
+        humanReviewRequired: policy.humanReviewRequired,
+      },
+    };
+
+    let aiAvailable = true;
+    let ai: RefundAiAnalysis;
+    try {
+      ai = await this.aiService.analyze(aiContext);
+    } catch {
+      // The policy outcome remains usable if OpenAI is unconfigured or unavailable.
+      aiAvailable = false;
+      ai = {
+        classification: inferClaimType(input.customerMessage),
+        confidence: 0,
+        reasoningSummary: 'AI analysis unavailable; deterministic refund policy applied.',
+        customerResponse: 'Thank you for sharing the details of your request.',
+        recommendation: policy.decision,
+        uncertainty: true,
+        suspiciousOrConflicting: policy.applicableRules.some((rule) =>
+          rule === 'SUSPICIOUS_REQUEST' || rule === 'CONFLICTING_REQUEST'),
+        signalSummary: 'AI analysis was unavailable.',
+        model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+        promptVersion: AI_PROMPT_VERSION,
+      };
+    }
+
+    // Do not give free-form model text control over the decision language shown to the customer.
+    const customerResponse = `${ai.customerResponse} ${policyOutcomeMessage(policy.decision)}`;
+    const reasonSummary = `${ai.reasoningSummary} Deterministic policy: ${policy.reasons.join(' ')}`.slice(0, 1000);
+    const aiAudit = {
+      available: aiAvailable,
+      confidence: ai.confidence,
+      recommendation: ai.recommendation,
+      uncertainty: ai.uncertainty,
+      suspiciousOrConflicting: ai.suspiciousOrConflicting,
+      signalSummary: ai.signalSummary,
+      model: ai.model,
+      promptVersion: ai.promptVersion,
+    };
+
     // Nested writes make request, decision, and audit creation atomic.
     return this.prisma.refundRequest.create({
       data: {
@@ -76,14 +143,15 @@ export class RefundService {
         decision: {
           create: {
             outcome: policy.decision,
-            classification: inferClaimType(input.customerMessage),
-            reasonSummary: policy.reasons.join(' '),
-            customerResponse: policy.reasons.join(' '),
+            classification: ai.classification,
+            reasonSummary,
+            customerResponse,
             policyEvaluation: {
               applicableRules: policy.applicableRules,
               reasons: policy.reasons,
               humanReviewRequired: policy.humanReviewRequired,
               metadata: policy.metadata,
+              ai: aiAudit,
             },
           },
         },
@@ -98,6 +166,11 @@ export class RefundService {
               eventType: 'POLICY_EVALUATED',
               summary: `Policy decision: ${policy.decision}.`,
               metadata: { rules: policy.applicableRules, reasons: policy.reasons },
+            },
+            {
+              eventType: 'DECISION_RECORDED',
+              summary: `Final decision recorded from deterministic policy: ${policy.decision}.`,
+              metadata: { decision: policy.decision, ai: aiAudit },
             },
           ],
         },
@@ -122,4 +195,10 @@ export class RefundService {
     if (!refund) throw new RefundServiceError('Refund request not found.', 404);
     return refund;
   }
+}
+
+function policyOutcomeMessage(decision: 'APPROVED' | 'DENIED' | 'ESCALATED'): string {
+  if (decision === 'APPROVED') return 'Your refund request is approved based on the order details.';
+  if (decision === 'DENIED') return 'This order is not eligible for a refund under the applicable policy.';
+  return 'Your request needs review by our support team before a decision is made.';
 }

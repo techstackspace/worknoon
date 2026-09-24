@@ -22,6 +22,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-worknoon}:${POSTGRES_PASSWORD:-local_dev_password}@db:5432/${POSTGRES_DB:-worknoon}?schema=public
       API_PORT: 3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     ports:
       - "3000:3000"
     depends_on:

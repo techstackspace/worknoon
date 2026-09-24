@@ -7,6 +7,7 @@
     "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @worknoon/api\" \"npm run dev -w @worknoon/web\"",
     "build": "npm run build -w @worknoon/api && npm run build -w @worknoon/web",
     "typecheck": "npm run typecheck -w @worknoon/api && npm run typecheck -w @worknoon/web",
+    "test": "npm test -w @worknoon/api",
     "db:generate": "npm run db:generate -w @worknoon/api",
     "db:migrate": "npm run db:migrate -w @worknoon/api",
     "db:seed": "npm run db:seed -w @worknoon/api"
