@@ -1,0 +1,15 @@
+{
+  "name": "worknoon-refund-system",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["apps/api", "apps/web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @worknoon/api\" \"npm run dev -w @worknoon/web\"",
+    "build": "npm run build -w @worknoon/api && npm run build -w @worknoon/web",
+    "typecheck": "npm run typecheck -w @worknoon/api && npm run typecheck -w @worknoon/web",
+    "db:generate": "npm run db:generate -w @worknoon/api",
+    "db:migrate": "npm run db:migrate -w @worknoon/api",
+    "db:seed": "npm run db:seed -w @worknoon/api"
+  },
+  "devDependencies": { "concurrently": "^9.2.1" }
+}

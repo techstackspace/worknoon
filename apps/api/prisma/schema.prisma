@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  DENIED
+  ESCALATED
+}
+
+enum RequestClassification {
+  DAMAGED_ITEM
+  INCORRECT_ITEM
+  OTHER
+  SUSPICIOUS
+  UNKNOWN
+}
+
+enum AuditEventType {
+  REQUEST_SUBMITTED
+  POLICY_EVALUATED
+  DECISION_RECORDED
+  STATUS_CHANGED
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+  requests  RefundRequest[]
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  orderNumber String      @unique
+  customerId  String
+  purchasedAt DateTime
+  currency    String      @default("USD") @db.VarChar(3)
+  totalAmount Decimal     @db.Decimal(10, 2)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items       OrderItem[]
+  requests    RefundRequest[]
+
+  @@index([customerId, purchasedAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  name        String
+  sku         String
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  isFinalSale Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, sku])
+  @@index([orderId])
+}
+
+model RefundRequest {
+  id             String                 @id @default(cuid())
+  customerId     String
+  orderId        String
+  message        String                 @db.Text
+  requestedAmount Decimal               @db.Decimal(10, 2)
+  status         RefundStatus           @default(PENDING)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  customer       Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  order          Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  decision       RefundDecision?
+  auditLogs      AuditLog[]
+
+  @@index([customerId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([status, createdAt])
+}
+
+model RefundDecision {
+  id                 String                 @id @default(cuid())
+  refundRequestId    String                 @unique
+  outcome            RefundStatus
+  classification     RequestClassification @default(UNKNOWN)
+  reasonSummary      String                 @db.VarChar(1000)
+  customerResponse   String                 @db.VarChar(2000)
+  policyEvaluation   Json
+  createdAt          DateTime               @default(now())
+  refundRequest      RefundRequest          @relation(fields: [refundRequestId], references: [id], onDelete: Cascade)
+
+  @@index([outcome, createdAt])
+}
+
+model AuditLog {
+  id              String          @id @default(cuid())
+  refundRequestId String
+  eventType       AuditEventType
+  summary         String          @db.VarChar(1000)
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+  refundRequest   RefundRequest   @relation(fields: [refundRequestId], references: [id], onDelete: Cascade)
+
+  @@index([refundRequestId, createdAt])
+  @@index([eventType, createdAt])
+}

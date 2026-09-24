@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+apps/api/src/generated/
+apps/api/prisma/*.db
+.DS_Store
